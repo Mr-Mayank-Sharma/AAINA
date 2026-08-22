@@ -10,11 +10,24 @@ function authHeaders(token: string) {
 
 type Tab = 'catalog' | 'analytics';
 
+const SESSION_KEY = 'aayna_admin_session';
+
+interface AdminSession { token: string; tenantId: string }
+
+function loadSession(): AdminSession | null {
+  try {
+    const raw = sessionStorage.getItem(SESSION_KEY);
+    return raw ? (JSON.parse(raw) as AdminSession) : null;
+  } catch {
+    return null;
+  }
+}
+
 export default function App() {
-  const [token, setToken] = useState<string | null>(null);
+  const [session, setSession] = useState<AdminSession | null>(loadSession);
   const [tab, setTab] = useState<Tab>('catalog');
 
-  if (!token) return <Login onLogin={setToken} />;
+  if (!session) return <Login onLogin={setSession} />;
 
   return (
     <>
@@ -23,16 +36,19 @@ export default function App() {
         <nav>
           <button className={tab === 'catalog' ? 'active' : ''} onClick={() => setTab('catalog')}>Catalog</button>
           <button className={tab === 'analytics' ? 'active' : ''} onClick={() => setTab('analytics')}>Analytics</button>
+          <button onClick={() => { sessionStorage.removeItem(SESSION_KEY); setSession(null); }}>Log out</button>
         </nav>
       </header>
       <main>
-        {tab === 'catalog' ? <Catalog token={token} /> : <Analytics token={token} />}
+        {tab === 'catalog'
+          ? <Catalog token={session.token} tenantId={session.tenantId} />
+          : <Analytics token={session.token} tenantId={session.tenantId} />}
       </main>
     </>
   );
 }
 
-function Login({ onLogin }: { onLogin: (t: string) => void }) {
+function Login({ onLogin }: { onLogin: (s: AdminSession) => void }) {
   const [email, setEmail] = useState('admin@pilot.test');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -46,8 +62,10 @@ function Login({ onLogin }: { onLogin: (t: string) => void }) {
         body: JSON.stringify({ email, password }),
       });
       if (!res.ok) { setError('Login failed — check email/password'); return; }
-      const { token } = await res.json();
-      onLogin(token);
+      const { token, tenant_id: tenantId } = await res.json();
+      const s: AdminSession = { token, tenantId: tenantId ?? TENANT_ID };
+      sessionStorage.setItem(SESSION_KEY, JSON.stringify(s));
+      onLogin(s);
     } catch {
       setError('Cannot reach API at ' + API + ' — is it running?');
     }
@@ -66,21 +84,28 @@ function Login({ onLogin }: { onLogin: (t: string) => void }) {
   );
 }
 
-function Catalog({ token }: { token: string }) {
+function Catalog({ token, tenantId }: { token: string; tenantId: string }) {
   const [garments, setGarments] = useState<Garment[]>([]);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [bulk, setBulk] = useState('');
 
   async function load() {
-    const res = await fetch(`${API}/v1/tenants/${TENANT_ID}/garments`, { headers: authHeaders(token) });
-    const { garments: list } = await res.json();
-    setGarments(list);
+    try {
+      const res = await fetch(`${API}/v1/tenants/${tenantId}/garments`, { headers: authHeaders(token) });
+      if (!res.ok) throw new Error(`API ${res.status}`);
+      const { garments: list } = await res.json();
+      setGarments(list ?? []);
+      setLoadError(null);
+    } catch (e) {
+      setLoadError(e instanceof Error ? e.message : 'Failed to load catalog');
+    }
   }
   useEffect(() => { void load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function bulkImport() {
     try {
       const items = JSON.parse(bulk);
-      const res = await fetch(`${API}/v1/tenants/${TENANT_ID}/garments/bulk-import`, {
+      const res = await fetch(`${API}/v1/tenants/${tenantId}/garments/bulk-import`, {
         method: 'POST',
         headers: authHeaders(token),
         body: JSON.stringify({ items }),
@@ -94,7 +119,7 @@ function Catalog({ token }: { token: string }) {
   }
 
   async function deactivate(id: string) {
-    await fetch(`${API}/v1/tenants/${TENANT_ID}/garments/${id}`, {
+    await fetch(`${API}/v1/tenants/${tenantId}/garments/${id}`, {
       method: 'DELETE',
       headers: authHeaders(token),
     });
@@ -103,6 +128,7 @@ function Catalog({ token }: { token: string }) {
 
   return (
     <>
+      {loadError && <p style={{ color: '#c0392b' }}>Catalog load failed: {loadError}</p>}
       <div className="card">
         <h3 style={{ marginBottom: 12 }}>Bulk import (JSON array)</h3>
         <textarea rows={4} placeholder='[{"sku":"TEE-01","name":"Classic Tee","reference_image_url":"https://…"}]' value={bulk} onChange={(e) => setBulk(e.target.value)} />
@@ -130,13 +156,14 @@ function Catalog({ token }: { token: string }) {
   );
 }
 
-function Analytics({ token }: { token: string }) {
+function Analytics({ token, tenantId }: { token: string; tenantId: string }) {
   const [summary, setSummary] = useState<AnalyticsSummary | null>(null);
 
   useEffect(() => {
-    void fetch(`${API}/v1/tenants/${TENANT_ID}/analytics/summary`, { headers: authHeaders(token) })
+    void fetch(`${API}/v1/tenants/${tenantId}/analytics/summary`, { headers: authHeaders(token) })
       .then((r) => r.json())
-      .then(setSummary);
+      .then(setSummary)
+      .catch(() => setSummary(null));
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!summary) return <p>Loading…</p>;

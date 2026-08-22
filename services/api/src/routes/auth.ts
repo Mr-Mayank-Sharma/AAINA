@@ -22,6 +22,6 @@ export function authRoutes(app: FastifyInstance, pool: Pool): void {
       { sub: rows[0].id, tenant_id: rows[0].tenant_id, role: rows[0].role },
       { expiresIn: '12h' },
     );
-    return { token };
+    return { token, tenant_id: rows[0].tenant_id };
   });
 }

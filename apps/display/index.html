@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MIRRA — In-Aisle Display</title>
+    <style>
+      * { box-sizing: border-box; margin: 0; }
+      body { font-family: -apple-system, system-ui, sans-serif; background: #111; color: #eee; padding: 24px; }
+      h1 { font-size: 22px; margin-bottom: 16px; }
+      .rack { display: flex; gap: 16px; flex-wrap: wrap; }
+      .garment-card {
+        background: #1c1c1e; border-radius: 14px; padding: 16px; width: 280px;
+        display: flex; flex-direction: column; gap: 10px;
+      }
+      .render-box {
+        aspect-ratio: 3/4; background: #2a2a2d; border-radius: 10px;
+        display: flex; align-items: center; justify-content: center; overflow: hidden;
+      }
+      .shimmer {
+        width: 100%; height: 100%;
+        background: linear-gradient(100deg, #2a2a2d 40%, #3a3a3e 50%, #2a2a2d 60%);
+        background-size: 200% 100%; animation: shimmer 1.4s infinite;
+      }
+      @keyframes shimmer { to { background-position: -200% 0; } }
+      img.result { width: 100%; height: 100%; object-fit: contain; }
+      button {
+        background: #4f7cff; color: white; border: none; border-radius: 8px;
+        padding: 10px 16px; cursor: pointer; font-size: 14px;
+      }
+      button.secondary { background: #333; }
+      input.band {
+        background: #2a2a2d; color: #eee; border: 1px solid #444; border-radius: 8px;
+        padding: 10px 14px; font-size: 16px; width: 260px;
+      }
+      .prompt { font-size: 18px; color: #aaa; margin: 12px 0; }
+      select, option { background: #2a2a2d; color: #eee; border: none; padding: 6px; border-radius: 6px; }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

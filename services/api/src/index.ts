@@ -1,5 +1,6 @@
 import Fastify from 'fastify';
 import fastifyJwt from '@fastify/jwt';
+import fastifyCors from '@fastify/cors';
 import pg from 'pg';
 import { config } from './config.js';
 import { sessionRoutes } from './routes/sessions.js';
@@ -18,6 +19,7 @@ export function buildApp(overrides?: { pool?: pg.Pool; startWorker?: boolean }) 
     });
 
   app.register(fastifyJwt, { secret: config.jwtSecret });
+  app.register(fastifyCors, { origin: true }); // dev: allow kiosk/display/admin origins
 
   sessionRoutes(app, pool);
   garmentRoutes(app, pool);

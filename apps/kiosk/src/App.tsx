@@ -40,6 +40,7 @@ export default function App() {
       setScreen('done');
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
+      setScreen('consent'); // show the error where the user can act on it
     } finally {
       setBusy(false);
     }

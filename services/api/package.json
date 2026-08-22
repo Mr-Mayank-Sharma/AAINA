@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@aayna/shared-types": "*",
+    "@fastify/cors": "^11.3.0",
     "@fastify/jwt": "^9.0.0",
     "bcryptjs": "^2.4.3",
     "bullmq": "^5.0.0",

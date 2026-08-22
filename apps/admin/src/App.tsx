@@ -39,14 +39,18 @@ function Login({ onLogin }: { onLogin: (t: string) => void }) {
 
   async function submit() {
     setError(null);
-    const res = await fetch(`${API}/v1/auth/login`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ email, password }),
-    });
-    if (!res.ok) { setError('Login failed'); return; }
-    const { token } = await res.json();
-    onLogin(token);
+    try {
+      const res = await fetch(`${API}/v1/auth/login`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+      });
+      if (!res.ok) { setError('Login failed — check email/password'); return; }
+      const { token } = await res.json();
+      onLogin(token);
+    } catch {
+      setError('Cannot reach API at ' + API + ' — is it running?');
+    }
   }
 
   return (

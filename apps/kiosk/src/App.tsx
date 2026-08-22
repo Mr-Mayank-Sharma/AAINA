@@ -12,6 +12,7 @@ export default function App() {
   const [saveProfile, setSaveProfile] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [bandId, setBandId] = useState('');
   const videoRef = useRef<HTMLVideoElement>(null);
   const captureRef = useRef<WebcamCapture>(new WebcamCapture());
 
@@ -25,6 +26,7 @@ export default function App() {
 
       // Screen 3 order per spec: session → consent → body-model → frame upload.
       const rfidTagId = `band-${crypto.randomUUID().slice(0, 8)}`;
+      setBandId(rfidTagId);
       const { session_id: sessionId } = await createSession(TENANT_ID, rfidTagId);
       await postConsent(sessionId, consent, saveProfile);
 
@@ -102,6 +104,12 @@ export default function App() {
           <div className="ok">✓</div>
           <h1>You're all set!</h1>
           <p>Take this band with you. Tap it at any display to see how outfits look on you.</p>
+          <p>
+            Your band ID: <strong style={{ userSelect: 'all' }}>{bandId}</strong>
+            <br />
+            <small>(In production the physical RFID band carries this — for dev, type it into the display.)</small>
+          </p>
+          <p><small>Person frames expire after 10 minutes — try garments on the display within that window.</small></p>
         </>
       )}
     </div>

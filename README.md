@@ -24,7 +24,7 @@ npm run dev:admin
 
 ## Layout
 
-- `apps/kiosk` — entry scan + consent UI
+- `apps/kiosk` — entrance gate: hands-free walk-through body scan + band linking (no shopper interaction)
 - `apps/display` — in-aisle try-on display
 - `apps/admin` — retailer dashboard
 - `services/api` — Node/TS REST API (Fastify)
@@ -40,6 +40,22 @@ npm run dev:admin
 4. RFID = pointer, not identity.
 5. Multi-tenant from day one.
 6. Person frames live in Redis only, deleted after each vendor call.
+
+## How the Gate Works
+
+The entrance camera (`apps/kiosk`) watches continuously in MediaPipe VIDEO mode.
+A stable full-body detection triggers a burst capture across the walker's
+crossing; the sharpest/largest frame is kept and measured (pose landmarks →
+proportions). The RFID band is read at the same gate — USB readers emulate
+keyboards, so their keystrokes land in a global buffer with zero UI. When scan
+and band both exist, the session is created, signage consent is logged
+automatically (`consent_given`, no profile save), and the shopper's band is
+live at every mirror.
+
+Height note: a single entrance camera can't measure absolute stature, so the
+gate uses a venue-configurable default — set `VITE_GATE_DEFAULT_HEIGHT_CM` in
+`apps/kiosk/.env.development` (default 170). Proportions stay accurate, so size
+recommendation is unaffected.
 
 ## Admin Dev Login
 

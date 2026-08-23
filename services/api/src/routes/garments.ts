@@ -22,6 +22,7 @@ export function garmentRoutes(app: FastifyInstance, pool: Pool): void {
         category: z.string().optional(),
         color: z.string().optional(),
         active: z.enum(['true', 'false']).optional(),
+        q: z.string().optional(), // autocomplete: name/sku substring search
       })
       .parse(req.query);
 
@@ -30,6 +31,7 @@ export function garmentRoutes(app: FastifyInstance, pool: Pool): void {
     if (q.category) { params.push(q.category); clauses.push(`category = $${params.length}`); }
     if (q.color) { params.push(q.color); clauses.push(`color = $${params.length}`); }
     if (q.active !== undefined) { params.push(q.active === 'true'); clauses.push(`active = $${params.length}`); }
+    if (q.q) { params.push(`%${q.q}%`); clauses.push(`(name ILIKE $${params.length} OR sku ILIKE $${params.length})`); }
 
     const { rows } = await pool.query(
       `SELECT * FROM garments WHERE ${clauses.join(' AND ')} ORDER BY created_at DESC`,

@@ -8,6 +8,7 @@ import { garmentRoutes } from './routes/garments.js';
 import { renderRoutes } from './routes/render.js';
 import { analyticsRoutes } from './routes/analytics.js';
 import { authRoutes } from './routes/auth.js';
+import { displayRoutes } from './routes/displays.js';
 
 export function buildApp(overrides?: { pool?: pg.Pool; startWorker?: boolean }) {
   const app = Fastify({ logger: true });
@@ -26,6 +27,7 @@ export function buildApp(overrides?: { pool?: pg.Pool; startWorker?: boolean }) 
   renderRoutes(app, pool);
   analyticsRoutes(app, pool);
   authRoutes(app, pool);
+  displayRoutes(app, pool);
 
   app.get('/health', async () => ({ ok: true }));
 

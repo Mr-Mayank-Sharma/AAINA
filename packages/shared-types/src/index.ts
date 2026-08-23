@@ -49,6 +49,19 @@ export interface Garment {
 export type RenderStatus = 'pending' | 'processing' | 'complete' | 'failed';
 export type RenderVendor = 'mocked' | 'fashn' | 'kling_kolors' | 'veesual';
 
+export type DisplayMode = 'single' | 'list';
+
+/** A physical try-on screen placed at a rack/wall. */
+export interface DisplayConfig {
+  id: string;
+  tenant_id: string;
+  label: string;
+  mode: DisplayMode;
+  garment_ids: string[];
+  created_at: string;
+  updated_at: string;
+}
+
 export interface RenderRequest {
   id: string;
   session_id: string;

@@ -1,4 +1,6 @@
 import type {
+  DisplayConfig,
+  DisplayMode,
   Garment,
   RenderCreateResponse,
   RenderStatusResponse,
@@ -21,8 +23,26 @@ async function api<T>(path: string, method: string, body?: unknown): Promise<T> 
 export const getSessionByRfid = (rfid: string) =>
   api<SessionByRfidResponse>(`/v1/sessions/by-rfid/${encodeURIComponent(rfid)}`, 'GET');
 
-export const listGarments = (tenantId: string) =>
-  api<{ garments: Garment[] }>(`/v1/tenants/${tenantId}/garments?active=true`, 'GET');
+export const listGarments = (tenantId: string, query?: string) =>
+  api<{ garments: Garment[] }>(
+    `/v1/tenants/${tenantId}/garments?active=true${query ? `&q=${encodeURIComponent(query)}` : ''}`,
+    'GET',
+  );
+
+export const registerDisplay = (tenantId: string, label: string, mode: DisplayMode, garmentIds: string[]) =>
+  api<DisplayConfig>('/v1/displays', 'POST', {
+    tenant_id: tenantId,
+    label,
+    mode,
+    garment_ids: garmentIds,
+  });
+
+export const getDisplay = (id: string) => api<DisplayConfig>(`/v1/displays/${id}`, 'GET');
+
+export const updateDisplay = (
+  id: string,
+  patch: { label?: string; mode?: DisplayMode; garment_ids?: string[] },
+) => api<DisplayConfig>(`/v1/displays/${id}`, 'PATCH', patch);
 
 export const requestRender = (sessionId: string, garmentId: string, size?: string) =>
   api<RenderCreateResponse>('/v1/render', 'POST', { session_id: sessionId, garment_id: garmentId, size });
@@ -53,4 +73,7 @@ export async function fetchRenderImageUrl(renderRequestId: string): Promise<stri
 }
 
 export const logGarmentView = (tenantId: string, sessionId: string, garmentId: string) =>
-  api<{ ok: boolean }>('/v1/tenants/' + tenantId + '/garment-views', 'POST', { session_id: sessionId, garment_id: garmentId }).catch(() => ({ ok: false }));
+  api<{ ok: boolean }>('/v1/tenants/' + tenantId + '/garment-views', 'POST', {
+    session_id: sessionId,
+    garment_id: garmentId,
+  }).catch(() => ({ ok: false }));

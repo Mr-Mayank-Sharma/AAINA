@@ -42,5 +42,15 @@ export async function pollRender(
   throw new Error('render timed out');
 }
 
+/** Fetch the rendered image through the authenticated presigned-redirect
+ *  endpoint and return a blob URL for <img src>. */
+export async function fetchRenderImageUrl(renderRequestId: string): Promise<string> {
+  const res = await fetch(`${API}/v1/render/${renderRequestId}/image`, {
+    headers: { 'x-device-key': DEVICE_KEY },
+  });
+  if (!res.ok) throw new Error(`render image → ${res.status}`);
+  return URL.createObjectURL(await res.blob());
+}
+
 export const logGarmentView = (tenantId: string, sessionId: string, garmentId: string) =>
   api<{ ok: boolean }>('/v1/tenants/' + tenantId + '/garment-views', 'POST', { session_id: sessionId, garment_id: garmentId }).catch(() => ({ ok: false }));

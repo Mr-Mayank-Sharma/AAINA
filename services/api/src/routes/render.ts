@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { Pool } from 'pg';
 import { Queue } from 'bullmq';
+import { Client } from 'minio';
 import { config } from '../config.js';
 
 let renderQueue: Queue | null = null;
@@ -11,6 +12,24 @@ function getQueue(): Queue {
   }
   return renderQueue;
 }
+
+// Presigned-GET issuer for private render outputs. Renders are images of the
+// shopper's own body — they must never sit on a public bucket.
+let minioClient: Client | null = null;
+function getMinio(): Client {
+  if (!minioClient) {
+    minioClient = new Client({
+      endPoint: new URL(process.env.S3_ENDPOINT ?? 'http://localhost:9000').hostname,
+      port: Number(new URL(process.env.S3_ENDPOINT ?? 'http://localhost:9000').port) || 9000,
+      useSSL: (process.env.S3_ENDPOINT ?? 'http://localhost:9000').startsWith('https'),
+      accessKey: process.env.S3_ACCESS_KEY ?? 'mirra',
+      secretKey: process.env.S3_SECRET_KEY ?? 'mirra_dev_secret',
+    });
+  }
+  return minioClient;
+}
+
+const RENDER_BUCKET = 'mirra-render-outputs';
 
 export function renderRoutes(app: FastifyInstance, pool: Pool): void {
   // POST /v1/render — COMPLIANCE-CRITICAL: requires consent + body model.
@@ -60,6 +79,33 @@ export function renderRoutes(app: FastifyInstance, pool: Pool): void {
     );
     if (rows.length === 0) return reply.code(404).send({ error: 'render request not found' });
     return rows[0];
+  });
+
+  // GET /v1/render/:id/image — presigned redirect to the render output.
+  // PRIVACY: renders are images of the shopper's own body. Requires device key
+  // or staff JWT; the bucket itself stays private behind short-lived signatures.
+  app.get('/v1/render/:id/image', async (req, reply) => {
+    if (req.headers['x-device-key'] !== config.deviceApiKey) {
+      try {
+        await req.jwtVerify();
+      } catch {
+        return reply.code(401).send({ error: 'unauthorized' });
+      }
+    }
+
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const { rows } = await pool.query(
+      `SELECT output_image_url, status FROM render_requests WHERE id = $1`,
+      [id],
+    );
+    if (rows.length === 0) return reply.code(404).send({ error: 'render request not found' });
+    if (rows[0].status !== 'complete' || !rows[0].output_image_url) {
+      return reply.code(409).send({ error: 'render not complete' });
+    }
+    const key = rows[0].output_image_url.split(`/mirra-render-outputs/`)[1];
+    if (!key) return reply.code(500).send({ error: 'malformed output url' });
+    const url = await getMinio().presignedGetObject(RENDER_BUCKET, key, 5 * 60);
+    return reply.redirect(url);
   });
 
   // POST /v1/sessions/:id/person-frame — kiosk uploads the transient capture frame.

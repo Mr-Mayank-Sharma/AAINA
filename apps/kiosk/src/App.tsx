@@ -62,6 +62,7 @@ export default function App() {
   const [screen, setScreen] = useState<Screen>('welcome');
   const [consent, setConsent] = useState(false);
   const [saveProfile, setSaveProfile] = useState(false);
+  const [heightCm, setHeightCm] = useState(170);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [bandId, setBandId] = useState('');
@@ -87,10 +88,10 @@ export default function App() {
       await captureRef.current.start(videoRef.current!);
       // ~2s stand-still capture (Decision D2).
       await new Promise((r) => setTimeout(r, 2000));
-      const result = await captureRef.current.capture();
+      const result = await captureRef.current.capture(heightCm);
       captureRef.current.stop();
 
-      await postBodyModel(sessionId, result.measurements);
+      await postBodyModel(sessionId, { ...result.measurements });
       await uploadPersonFrame(sessionId, result.frameBase64);
 
       setScreen('done');
@@ -175,7 +176,7 @@ export default function App() {
                 </span>
               </label>
 
-              <label className="flex items-start gap-4 bg-gray-50 rounded-xl p-4 mb-8 cursor-pointer hover:bg-blue-50 transition-colors">
+              <label className="flex items-start gap-4 bg-gray-50 rounded-xl p-4 mb-3 cursor-pointer hover:bg-blue-50 transition-colors">
                 <input
                   type="checkbox"
                   checked={saveProfile}
@@ -189,6 +190,24 @@ export default function App() {
                   </span>
                 </span>
               </label>
+
+              {/* Height calibration — pose gives ratios, this sets the absolute scale */}
+              <div className="bg-gradient-to-r from-purple-50 to-blue-50 border border-purple-100 rounded-xl p-4 mb-8">
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Your height (cm) — used to calibrate your measurements
+                </label>
+                <div className="flex items-center gap-4">
+                  <input
+                    type="range"
+                    min={140}
+                    max={210}
+                    value={heightCm}
+                    onChange={(e) => setHeightCm(Number(e.target.value))}
+                    className="flex-1 accent-purple-600"
+                  />
+                  <span className="text-lg font-bold aayna-gradient-text w-16 text-right">{heightCm}</span>
+                </div>
+              </div>
 
               {error && (
                 <div className="flex items-start gap-2 bg-red-50 border border-red-200 rounded-xl p-4 mb-6">

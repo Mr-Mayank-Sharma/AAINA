@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@aayna/shared-types": "*",
+    "@mediapipe/tasks-vision": "^1.0.1",
     "autoprefixer": "^10.5.4",
     "lucide-react": "^1.33.0",
     "postcss": "^8.5.26",

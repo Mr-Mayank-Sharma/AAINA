@@ -10,7 +10,7 @@ import {
   CheckCircle2,
 } from 'lucide-react';
 import type { Garment } from '@aayna/shared-types';
-import { getSessionByRfid, listGarments, pollRender, requestRender } from './api';
+import { fetchRenderImageUrl, getSessionByRfid, listGarments, pollRender, requestRender } from './api';
 
 const TENANT_ID = import.meta.env.VITE_TENANT_ID ?? '';
 
@@ -30,8 +30,10 @@ function GarmentCard({ garment, sessionId }: { garment: Garment; sessionId: stri
       const size = garment.size_options?.[sizeIndex];
       const { render_request_id: requestId } = await requestRender(sessionId, garment.id, size);
       const result = await pollRender(requestId);
-      if (result.status === 'complete' && result.output_image_url) {
-        setRender({ phase: 'done', url: result.output_image_url });
+      if (result.status === 'complete') {
+        // Authenticated fetch → blob URL (render bucket is private).
+        const url = await fetchRenderImageUrl(requestId);
+        setRender({ phase: 'done', url });
       } else {
         setRender({ phase: 'failed', message: 'Render failed — try again' });
       }

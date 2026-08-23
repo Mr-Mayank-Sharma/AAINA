@@ -45,13 +45,12 @@ let landmarkerPromise: Promise<PoseLandmarker> | null = null;
 function getLandmarker(): Promise<PoseLandmarker> {
   if (!landmarkerPromise) {
     landmarkerPromise = (async () => {
-      const vision = await FilesetResolver.forVisionTasks(
-        'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm',
-      );
+      // Assets are vendored under /public/mediapipe so the kiosk works with
+      // zero internet — demo venues can't be trusted to have wifi.
+      const vision = await FilesetResolver.forVisionTasks('/mediapipe/wasm');
       return PoseLandmarker.createFromOptions(vision, {
         baseOptions: {
-          modelAssetPath:
-            'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task',
+          modelAssetPath: '/mediapipe/models/pose_landmarker_lite.task',
           delegate: 'GPU',
         },
         runningMode: 'IMAGE',

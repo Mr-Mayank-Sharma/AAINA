@@ -189,3 +189,108 @@ export class WebcamCapture implements CaptureModule {
     this.stream = null;
   }
 }
+
+// ── Entrance gate scanner ────────────────────────────────────────────────
+// Hands-free variant: watches a live entrance-camera feed, detects a walker,
+// and auto-captures the best frame during their crossing. No interaction.
+
+let videoLandmarkerPromise: Promise<PoseLandmarker> | null = null;
+
+function getVideoLandmarker(): Promise<PoseLandmarker> {
+  if (!videoLandmarkerPromise) {
+    videoLandmarkerPromise = (async () => {
+      const vision = await FilesetResolver.forVisionTasks('/mediapipe/wasm');
+      return PoseLandmarker.createFromOptions(vision, {
+        baseOptions: {
+          modelAssetPath: '/mediapipe/models/pose_landmarker_lite.task',
+          delegate: 'GPU',
+        },
+        runningMode: 'VIDEO',
+      });
+    })();
+  }
+  return videoLandmarkerPromise;
+}
+
+export class GateScanner {
+  private stream: MediaStream | null = null;
+  private video: HTMLVideoElement | null = null;
+  private landmarker: PoseLandmarker | null = null;
+  private canvas: HTMLCanvasElement | null = null;
+  private lastVideoTime = -1;
+
+  async start(video: HTMLVideoElement): Promise<void> {
+    this.video = video;
+    this.stream = await navigator.mediaDevices.getUserMedia({ video: { width: 1280, height: 720 } });
+    video.srcObject = this.stream;
+    await video.play();
+    this.landmarker = await getVideoLandmarker();
+    this.canvas = document.createElement('canvas');
+  }
+
+  /**
+   * Analyze the newest camera frame. Returns the body's vertical span ratio
+   * plus landmarks when a full body is visible, else null. Cheap enough to
+   * call every animation frame.
+   */
+  poll(): { span: number; points: Pt[] } | null {
+    if (!this.video || !this.landmarker || !this.canvas || this.video.readyState < 2) return null;
+    if (this.video.currentTime === this.lastVideoTime) return null; // no new frame yet
+    this.lastVideoTime = this.video.currentTime;
+
+    this.canvas.width = this.video.videoWidth;
+    this.canvas.height = this.video.videoHeight;
+    this.canvas.getContext('2d')!.drawImage(this.video, 0, 0);
+
+    const res = this.landmarker.detectForVideo(this.canvas, performance.now());
+    const lm = res.landmarks?.[0];
+    if (!lm || lm.length < 29) return null;
+
+    const pts: Pt[] = lm.map((p) => ({ x: p.x, y: p.y }));
+    const span = Math.abs(
+      mid(pts[L_ANKLE], pts[R_ANKLE]).y - mid(pts[L_SHOULDER], pts[R_SHOULDER]).y,
+    );
+    if (span < 0.15) return null; // partial body — not scannable
+    return { span, points: pts };
+  }
+
+  private snapshotBase64(): string {
+    const v = this.video!;
+    const c = document.createElement('canvas');
+    c.width = v.videoWidth;
+    c.height = v.videoHeight;
+    c.getContext('2d')!.drawImage(v, 0, 0);
+    return c.toDataURL('image/jpeg', 0.85).split(',')[1];
+  }
+
+  /**
+   * Collect frames while the walker crosses the gate; keep the one with the
+   * largest visible body (closest to the scan line). Falls back gracefully
+   * when the walker exits between samples.
+   */
+  async captureBest(
+    heightCm: number,
+    opts?: { frames?: number; intervalMs?: number },
+  ): Promise<CaptureResult> {
+    const frames = opts?.frames ?? 6;
+    const intervalMs = opts?.intervalMs ?? 180;
+    let best: { score: number; base64: string; points: Pt[] } | null = null;
+
+    for (let i = 0; i < frames; i++) {
+      await new Promise((r) => setTimeout(r, intervalMs));
+      const hit = this.poll();
+      if (!hit) continue;
+      const score = hit.span;
+      if (!best || score > best.score) {
+        best = { score, base64: this.snapshotBase64(), points: hit.points };
+      }
+    }
+    if (!best) throw new Error('No clear body capture — please walk through again');
+    return { frameBase64: best.base64, measurements: estimateFromLandmarks(best.points, heightCm) };
+  }
+
+  stop(): void {
+    this.stream?.getTracks().forEach((t) => t.stop());
+    this.stream = null;
+  }
+}

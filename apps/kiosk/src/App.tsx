@@ -1,285 +1,264 @@
-import { useRef, useState } from 'react';
+/**
+ * AAYNA Entrance Gate — hands-free shopper scan.
+ *
+ * Replaces the interactive kiosk flow: an entrance camera watches continuously,
+ * detects anyone walking through, auto-captures their best frame + measurements.
+ * The RFID band is read at the same gate (USB readers act as keyboards — their
+ * keystrokes land in the global band buffer). When both scan and band exist,
+ * the session is linked automatically. Zero shopper interaction.
+ *
+ * Consent: pilot signage mode — the entrance notice ("By entering you agree…")
+ * is the opt-in; logged automatically as consent_given with no profile save.
+ */
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Scan,
   ShieldCheck,
-  Camera,
   CheckCircle2,
-  Sparkles,
-  Clock,
-  Copy,
   Loader2,
   AlertCircle,
+  Radio,
+  RefreshCw,
 } from 'lucide-react';
-import { WebcamCapture } from './capture';
+import { GateScanner } from './capture';
 import { createSession, postConsent, postBodyModel, uploadPersonFrame } from './api';
 
-type Screen = 'welcome' | 'consent' | 'scan' | 'done';
+type Phase = 'boot' | 'watching' | 'capturing' | 'linking' | 'done';
 
 const TENANT_ID = import.meta.env.VITE_TENANT_ID ?? '';
-
-const STEPS = [
-  { label: 'Welcome', icon: Sparkles },
-  { label: 'Your Choice', icon: ShieldCheck },
-  { label: 'Scan', icon: Scan },
-  { label: 'Ready', icon: CheckCircle2 },
-];
-
-function StepIndicator({ current }: { current: number }) {
-  return (
-    <div className="flex items-center justify-center gap-0 mb-8">
-      {STEPS.map((step, i) => {
-        const done = i < current;
-        const active = i === current;
-        return (
-          <div key={step.label} className="flex items-center">
-            <div className="flex flex-col items-center">
-              <div
-                className={`w-10 h-10 rounded-full flex items-center justify-center transition-all ${
-                  done
-                    ? 'bg-gradient-to-r from-purple-600 to-blue-600 text-white'
-                    : active
-                      ? 'bg-gradient-to-r from-purple-600 to-blue-600 text-white ring-4 ring-purple-200'
-                      : 'bg-gray-100 text-gray-400'
-                }`}
-              >
-                <step.icon className="w-5 h-5" />
-              </div>
-              <span className={`text-xs mt-1.5 font-medium ${active ? 'text-gray-900' : 'text-gray-400'}`}>
-                {step.label}
-              </span>
-            </div>
-            {i < STEPS.length - 1 && (
-              <div className={`w-12 h-0.5 mx-2 mb-5 ${done ? 'bg-purple-400' : 'bg-gray-200'}`} />
-            )}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
+/** Single-camera height can't be measured absolutely; population default,
+ *  overridable per venue via env. Measurements stay ratio-accurate. */
+const DEFAULT_HEIGHT_CM = Number(import.meta.env.VITE_GATE_DEFAULT_HEIGHT_CM ?? 170);
 
 export default function App() {
-  const [screen, setScreen] = useState<Screen>('welcome');
-  const [consent, setConsent] = useState(false);
-  const [saveProfile, setSaveProfile] = useState(false);
-  const [heightCm, setHeightCm] = useState(170);
-  const [busy, setBusy] = useState(false);
+  const [phase, setPhase] = useState<Phase>('boot');
   const [error, setError] = useState<string | null>(null);
-  const [bandId, setBandId] = useState('');
+  const [linkedBand, setLinkedBand] = useState('');
   const videoRef = useRef<HTMLVideoElement>(null);
-  const captureRef = useRef<WebcamCapture>(new WebcamCapture());
+  const scannerRef = useRef<GateScanner>(new GateScanner());
+  // Scan result and band ID can arrive in either order — stash until both exist.
+  const scanRef = useRef<{ frameBase64: string; measurements: Record<string, unknown> } | null>(null);
+  const bandRef = useRef<string>('');
+  const linkingRef = useRef(false);
 
-  const stepIndex = { welcome: 0, consent: 1, scan: 2, done: 3 }[screen];
+  /** Commit a band tap: typed by a USB RFID reader or simulated in dev. */
+  const submitBand = useCallback((rawId: string) => {
+    const id = rawId.trim();
+    if (!id) return;
+    bandRef.current = id;
+    void tryLink();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  async function startScan() {
-    setBusy(true);
-    setError(null);
+  const tryLink = useCallback(async () => {
+    if (linkingRef.current || !scanRef.current || !bandRef.current) return;
+    linkingRef.current = true;
+    setPhase('linking');
     try {
-      // Mount the video element first.
-      setScreen('scan');
-      await new Promise((r) => setTimeout(r, 50));
-
-      // Screen 3 order per spec: session → consent → body-model → frame upload.
-      const rfidTagId = `band-${crypto.randomUUID().slice(0, 8)}`;
-      setBandId(rfidTagId);
-      const { session_id: sessionId } = await createSession(TENANT_ID, rfidTagId);
-      await postConsent(sessionId, consent, saveProfile);
-
-      await captureRef.current.start(videoRef.current!);
-      // ~2s stand-still capture (Decision D2).
-      await new Promise((r) => setTimeout(r, 2000));
-      const result = await captureRef.current.capture(heightCm);
-      captureRef.current.stop();
-
-      await postBodyModel(sessionId, { ...result.measurements });
-      await uploadPersonFrame(sessionId, result.frameBase64);
-
-      setScreen('done');
+      const { session_id: sessionId } = await createSession(TENANT_ID, bandRef.current);
+      // Pilot signage-consent mode: entrance notice is the opt-in.
+      await postConsent(sessionId, true, false);
+      await postBodyModel(sessionId, { ...scanRef.current.measurements });
+      await uploadPersonFrame(sessionId, scanRef.current.frameBase64);
+      setLinkedBand(bandRef.current);
+      setPhase('done');
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
-      setScreen('consent'); // show the error where the user can act on it
+      setPhase('watching');
     } finally {
-      setBusy(false);
+      linkingRef.current = false;
     }
-  }
+  }, []);
+
+  const reset = useCallback(() => {
+    scanRef.current = null;
+    bandRef.current = '';
+    setLinkedBand('');
+    setError(null);
+    setPhase('watching');
+  }, []);
+
+  // Boot the entrance camera once.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        await scannerRef.current.start(videoRef.current!);
+        if (!cancelled) setPhase('watching');
+      } catch (e) {
+        if (!cancelled) setError(e instanceof Error ? e.message : String(e));
+      }
+    })();
+    return () => {
+      cancelled = true;
+      scannerRef.current.stop();
+    };
+  }, []);
+
+  // Watching loop: require a stable full-body detection before triggering.
+  useEffect(() => {
+    if (phase !== 'watching') return;
+    let raf = 0;
+    let streak = 0;
+    const tick = () => {
+      const hit = scannerRef.current.poll();
+      streak = hit ? streak + 1 : Math.max(0, streak - 1);
+      if (streak >= 4) {
+        setPhase('capturing');
+        return;
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [phase]);
+
+  // Capturing: burst across the crossing window, keep the best frame.
+  useEffect(() => {
+    if (phase !== 'capturing') return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const result = await scannerRef.current.captureBest(DEFAULT_HEIGHT_CM);
+        if (cancelled) return;
+        scanRef.current = { frameBase64: result.frameBase64, measurements: { ...result.measurements } };
+        void tryLink(); // band may already have been read
+        if (!bandRef.current) setPhase((p) => (p === 'capturing' ? 'linking' : p));
+      } catch (e) {
+        if (cancelled) return;
+        setError(e instanceof Error ? e.message : String(e));
+        setPhase('watching');
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [phase, tryLink]);
+
+  // Global keydown buffer — USB RFID readers emulate keyboards (digits + Enter).
+  useEffect(() => {
+    let buf = '';
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Enter') {
+        if (buf.length >= 3) submitBand(buf);
+        buf = '';
+      } else if (/^[a-zA-Z0-9-]$/.test(e.key)) {
+        buf += e.key;
+      } else if (e.key === 'Backspace') {
+        buf = buf.slice(0, -1);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [submitBand]);
+
+  // Done screen auto-resets for the next walker.
+  useEffect(() => {
+    if (phase !== 'done') return;
+    const t = setTimeout(reset, 6000);
+    return () => clearTimeout(t);
+  }, [phase, reset]);
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-50 via-white to-purple-50 flex items-center justify-center p-6">
-      <div className="w-full max-w-xl">
-        <StepIndicator current={stepIndex} />
+    <div className="relative min-h-screen bg-gray-950 text-white overflow-hidden">
+      {/* Live entrance feed fills the screen */}
+      <video ref={videoRef} muted playsInline className="absolute inset-0 w-full h-full object-cover opacity-90" />
+      <div className="absolute inset-0 bg-gradient-to-t from-gray-950/90 via-transparent to-gray-950/60 pointer-events-none" />
 
-        <div className="bg-white rounded-3xl shadow-xl border border-gray-100 p-8">
-          {/* ── Welcome ─────────────────────────────────────────── */}
-          {screen === 'welcome' && (
-            <div className="text-center">
-              <div className="inline-flex items-center px-4 py-2 bg-gradient-to-r from-purple-100 to-blue-100 rounded-full text-sm font-medium text-purple-700 mb-6">
-                <Sparkles className="w-4 h-4 mr-2" />
-                AAYNA Style Station
-              </div>
-              <h1 className="text-4xl font-bold text-gray-900 mb-4">
-                See clothes on{' '}
-                <span className="aayna-gradient-text">your body</span>
-              </h1>
-              <p className="text-gray-600 mb-8 leading-relaxed">
-                Our style station shows how outfits will look on you — without trying
-                everything on physically.
-              </p>
-
-              <div className="grid gap-3 text-left mb-8">
-                <div className="flex items-start gap-3 bg-gray-50 rounded-xl p-4">
-                  <Scan className="w-5 h-5 text-purple-600 mt-0.5 shrink-0" />
-                  <p className="text-sm text-gray-700">
-                    <strong>What we scan:</strong> a short photo of your body to estimate
-                    proportions (height, chest, waist, hips).
-                  </p>
-                </div>
-                <div className="flex items-start gap-3 bg-gray-50 rounded-xl p-4">
-                  <ShieldCheck className="w-5 h-5 text-blue-600 mt-0.5 shrink-0" />
-                  <p className="text-sm text-gray-700">
-                    <strong>What we never do:</strong> store your face or any facial data.
-                  </p>
-                </div>
-                <div className="flex items-start gap-3 bg-gray-50 rounded-xl p-4">
-                  <Clock className="w-5 h-5 text-purple-600 mt-0.5 shrink-0" />
-                  <p className="text-sm text-gray-700">
-                    <strong>How long we keep it:</strong> deleted automatically at end of day
-                    unless you ask us to save your profile.
-                  </p>
-                </div>
-              </div>
-
-              <button onClick={() => setScreen('consent')} className="aayna-btn w-full py-4 text-lg">
-                Continue
-              </button>
-            </div>
-          )}
-
-          {/* ── Consent ─────────────────────────────────────────── */}
-          {screen === 'consent' && (
-            <div>
-              <h1 className="text-3xl font-bold text-gray-900 mb-6 text-center">Your choice</h1>
-
-              <label className="flex items-start gap-4 bg-gray-50 rounded-xl p-4 mb-3 cursor-pointer hover:bg-purple-50 transition-colors">
-                <input
-                  type="checkbox"
-                  checked={consent}
-                  onChange={(e) => setConsent(e.target.checked)}
-                  className="mt-1 w-5 h-5 accent-purple-600"
-                />
-                <span className="text-sm text-gray-700 leading-relaxed">
-                  I agree to have my body proportions scanned and used for virtual try-on during
-                  this visit. A photo taken during the scan is sent to our rendering partner and
-                  not stored.{' '}
-                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-700">
-                    Required
-                  </span>
-                </span>
-              </label>
-
-              <label className="flex items-start gap-4 bg-gray-50 rounded-xl p-4 mb-3 cursor-pointer hover:bg-blue-50 transition-colors">
-                <input
-                  type="checkbox"
-                  checked={saveProfile}
-                  onChange={(e) => setSaveProfile(e.target.checked)}
-                  className="mt-1 w-5 h-5 accent-blue-600"
-                />
-                <span className="text-sm text-gray-700 leading-relaxed">
-                  Save my profile for my next visit{' '}
-                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700">
-                    Optional
-                  </span>
-                </span>
-              </label>
-
-              {/* Height calibration — pose gives ratios, this sets the absolute scale */}
-              <div className="bg-gradient-to-r from-purple-50 to-blue-50 border border-purple-100 rounded-xl p-4 mb-8">
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Your height (cm) — used to calibrate your measurements
-                </label>
-                <div className="flex items-center gap-4">
-                  <input
-                    type="range"
-                    min={140}
-                    max={210}
-                    value={heightCm}
-                    onChange={(e) => setHeightCm(Number(e.target.value))}
-                    className="flex-1 accent-purple-600"
-                  />
-                  <span className="text-lg font-bold aayna-gradient-text w-16 text-right">{heightCm}</span>
-                </div>
-              </div>
-
-              {error && (
-                <div className="flex items-start gap-2 bg-red-50 border border-red-200 rounded-xl p-4 mb-6">
-                  <AlertCircle className="w-5 h-5 text-red-500 shrink-0 mt-0.5" />
-                  <p className="text-sm text-red-700">{error}</p>
-                </div>
-              )}
-
-              <button disabled={!consent || busy} onClick={startScan} className="aayna-btn w-full py-4 text-lg">
-                {busy ? (
-                  <>
-                    <Loader2 className="w-5 h-5 animate-spin" /> Scanning…
-                  </>
-                ) : (
-                  <>
-                    <Camera className="w-5 h-5" /> Agree &amp; Scan
-                  </>
-                )}
-              </button>
-            </div>
-          )}
-
-          {/* ── Scan ────────────────────────────────────────────── */}
-          {screen === 'scan' && (
-            <div className="text-center">
-              <h1 className="text-3xl font-bold text-gray-900 mb-2">Stand still…</h1>
-              <p className="text-gray-500 mb-6">Capturing your proportions — takes ~2 seconds</p>
-              <div className="relative rounded-2xl overflow-hidden bg-gradient-to-br from-purple-400 via-blue-500 to-purple-600 p-1">
-                <video ref={videoRef} muted playsInline className="rounded-xl w-full" />
-                <div className="absolute inset-x-16 top-4 bottom-4 border-2 border-dashed border-white/60 rounded-xl pointer-events-none" />
-              </div>
-              <div className="flex items-center justify-center gap-2 mt-6 text-gray-500">
-                <Loader2 className="w-4 h-4 animate-spin" />
-                <span className="text-sm">Processing…</span>
-              </div>
-            </div>
-          )}
-
-          {/* ── Done ────────────────────────────────────────────── */}
-          {screen === 'done' && (
-            <div className="text-center">
-              <div className="w-20 h-20 mx-auto mb-6 rounded-full bg-gradient-to-r from-green-400 to-emerald-500 flex items-center justify-center shadow-lg">
-                <CheckCircle2 className="w-10 h-10 text-white" />
-              </div>
-              <h1 className="text-3xl font-bold text-gray-900 mb-3">You're all set!</h1>
-              <p className="text-gray-600 mb-6">
-                Take this band with you. Tap it at any display to see how outfits look on you.
-              </p>
-
-              <div className="bg-gradient-to-r from-purple-50 to-blue-50 border border-purple-100 rounded-2xl p-5 mb-4">
-                <p className="text-xs uppercase tracking-wide text-gray-500 mb-1">Your band ID</p>
-                <div className="flex items-center justify-center gap-2">
-                  <code className="text-xl font-bold aayna-gradient-text select-all">{bandId}</code>
-                  <Copy
-                    className="w-4 h-4 text-gray-400 cursor-pointer hover:text-purple-600"
-                    onClick={() => navigator.clipboard?.writeText(bandId)}
-                  />
-                </div>
-                <p className="text-xs text-gray-400 mt-2">
-                  In production the physical RFID band carries this — for dev, type it into the display.
-                </p>
-              </div>
-
-              <div className="flex items-start justify-center gap-2 text-gray-400">
-                <Clock className="w-3.5 h-3.5 mt-0.5" />
-                <p className="text-xs">Person frames expire after 10 minutes — try garments within that window.</p>
-              </div>
-            </div>
-          )}
+      {/* Scan-line sweep while watching */}
+      {phase === 'watching' && (
+        <div className="absolute inset-x-0 top-0 h-full overflow-hidden pointer-events-none">
+          <div className="gate-sweep absolute inset-x-0 h-1 bg-gradient-to-r from-transparent via-purple-400/70 to-transparent" />
         </div>
+      )}
 
-        <p className="text-center text-xs text-gray-400 mt-6">AAYNA · Your mirror, everywhere you shop</p>
+      <div className="relative z-10 flex flex-col items-center justify-end min-h-screen p-10 pb-14">
+        {/* ── Boot ── */}
+        {phase === 'boot' && (
+          <div className="flex items-center gap-3 text-purple-200">
+            <Loader2 className="w-6 h-6 animate-spin" />
+            <span className="text-lg">Starting entrance camera…</span>
+          </div>
+        )}
+
+        {/* ── Watching ── */}
+        {phase === 'watching' && (
+          <div className="text-center">
+            <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-white/10 backdrop-blur mb-4">
+              <Radio className="w-4 h-4 text-green-400 animate-pulse" />
+              <span className="text-sm tracking-wide">GATE ACTIVE</span>
+            </div>
+            <h1 className="text-5xl font-bold mb-3">
+              Walk on in — <span className="aayna-gradient-text">we'll do the rest</span>
+            </h1>
+            <p className="text-gray-300 max-w-xl mx-auto">
+              Our entrance camera measures your style profile as you pass. Tap your band at any
+              mirror to see outfits on you.
+            </p>
+            {error && (
+              <div className="mt-5 inline-flex items-start gap-2 bg-red-500/20 border border-red-400/40 rounded-xl px-4 py-3 text-left">
+                <AlertCircle className="w-5 h-5 text-red-300 shrink-0 mt-0.5" />
+                <p className="text-sm text-red-100">{error}</p>
+              </div>
+            )}
+            <button
+              onClick={() => submitBand(`band-${crypto.randomUUID().slice(0, 8)}`)}
+              className="mt-6 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-white/10 hover:bg-white/20 transition-colors text-sm"
+            >
+              <RefreshCw className="w-4 h-4" /> Simulate band tap (dev)
+            </button>
+          </div>
+        )}
+
+        {/* ── Capturing ── */}
+        {phase === 'capturing' && (
+          <div className="text-center">
+            <div className="inline-flex items-center gap-3 px-6 py-3 rounded-full bg-purple-600/80 backdrop-blur">
+              <Scan className="w-5 h-5 animate-pulse" />
+              <span className="text-lg font-medium tracking-wide">Scanning… keep walking</span>
+            </div>
+          </div>
+        )}
+
+        {/* ── Linking ── */}
+        {phase === 'linking' && (
+          <div className="text-center">
+            <div className="inline-flex items-center gap-3 px-6 py-3 rounded-full bg-blue-600/80 backdrop-blur">
+              <Loader2 className="w-5 h-5 animate-spin" />
+              <span className="text-lg font-medium tracking-wide">Scan captured — waiting for band…</span>
+            </div>
+            <button
+              onClick={() => submitBand(`band-${crypto.randomUUID().slice(0, 8)}`)}
+              className="mt-4 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-white/10 hover:bg-white/20 transition-colors text-sm"
+            >
+              <RefreshCw className="w-4 h-4" /> Simulate band tap (dev)
+            </button>
+          </div>
+        )}
+
+        {/* ── Done ── */}
+        {phase === 'done' && (
+          <div className="text-center">
+            <div className="w-16 h-16 mx-auto mb-5 rounded-full bg-gradient-to-r from-green-400 to-emerald-500 flex items-center justify-center shadow-lg">
+              <CheckCircle2 className="w-9 h-9 text-white" />
+            </div>
+            <h1 className="text-4xl font-bold mb-3">You're all set!</h1>
+            <p className="text-gray-300 mb-4">
+              Your band <code className="font-bold aayna-gradient-text">{linkedBand}</code> is linked.
+              Head to any mirror and pick up what you like.
+            </p>
+            <p className="text-xs text-gray-500">Resetting for next shopper…</p>
+          </div>
+        )}
+
+        {/* Consent signage notice — the pilot's opt-in mechanism */}
+        <div className="absolute bottom-4 inset-x-0 flex justify-center">
+          <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/5 text-[11px] text-gray-400">
+            <ShieldCheck className="w-3.5 h-3.5 shrink-0" />
+            Entrance signage applies: body-proportion scan only — no facial data stored, frames
+            deleted after each use.
+          </div>
+        </div>
       </div>
     </div>
   );
